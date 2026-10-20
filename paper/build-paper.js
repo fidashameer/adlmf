@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const d = require('docx');
 const {
   Document, Packer, Paragraph, TextRun, AlignmentType, SectionType,
@@ -7,7 +8,7 @@ const {
 } = d;
 
 const T = 'Times New Roman';
-const SHOTS = '/home/claude/report/shots/';
+const SHOTS = path.join(__dirname, 'figures') + path.sep;
 
 function P(text, o = {}) {
   const opts = Object.assign({ size: 20, after: 0, before: 0, indent: 0.2,
@@ -186,7 +187,7 @@ a(P('The principle we arrived at is theirs. When information is missing, widen w
 // III. SYSTEM DESIGN
 a(SEC('System Design'));
 a(P('Fig. 1 shows the end-to-end workflow. Services request locks from etcd and report their own lock events. The dependency monitor reads that single event stream and keeps two structurally different records from it. Detection feeds the recovery engine, while prediction produces an operator warning that needs no abort. The chosen victim is signalled across a process boundary, which releases its locks and returns the system to the top of the loop. Shaded blocks are contributed by this work and everything else is applied.', { indent: 0 }));
-a(FIG('/home/claude/report/fig1.png', 3.30));
+a(FIG(path.join(__dirname, 'figures', 'fig1-architecture.png'), 3.30));
 a(FIGCAP(1, 'End-to-end workflow. One event stream feeds two records: a wait-for graph for detection and a persistent lock-order graph for prediction. Recording sits on the critical path and explanation generation does not.'));
 
 a(SUB('Two graphs from one event stream'));
@@ -219,13 +220,13 @@ const G = []; const g = (...xs) => xs.forEach(x => G.push(x));
 const M = []; const m = (...xs) => xs.forEach(x => M.push(x));
 const H = []; const h = (...xs) => xs.forEach(x => H.push(x));
 
-g(FIG(SHOTS + '02-run.png', 6.50));
+g(FIG(SHOTS + 'fig2-e2e-run.png', 6.50));
 g(FIGCAP(2, 'A twenty second end-to-end run with three services as separate OS processes against etcd. One confirmed lock-order warning, twelve deadlocks broken by signal, no exclusion failures, and a lock reclaimed 2.2 s after its holder was killed with SIGKILL. The victim alternates between inventory and payment rather than settling on one.'));
 
-g(FIG(SHOTS + '03-dash-deadlock.png', 6.40));
+g(FIG(SHOTS + 'fig3-dashboard-deadlock.png', 6.40));
 g(FIGCAP(3, 'Live view of the same system with ten services. audit holds L2 and waits on L0; billing holds L1 and waits on L2, which audit holds. The right panel reads lock ownership straight from etcd. Exclusion is checked every 50 ms and the violation count is zero.'));
 
-g(FIG(SHOTS + '04b-counters.png', 5.60));
+g(FIG(SHOTS + 'fig4-counters.png', 5.60));
 g(FIGCAP(4, 'Counters from later in the same run. After 3,107 lock events and 149 deadlocks broken there are still no exclusion failures.'));
 
 // V. METHODOLOGY
@@ -268,10 +269,10 @@ m(gap(140));
 m(P('The six-figure values are not a result. Cost-only and youngest complete a single transaction per run at high contention, so the ratio divides by almost nothing. The finding is the collapse itself. Both of them keep choosing the same victim, which therefore never finishes anything. That two baselines consuming entirely different information fail in the same way strengthens the point, because it rules out the objection that we picked a weak opponent.'));
 m(P('Two qualifications belong here. At low contention our advantage sits inside the margin of error and we claim no win. At medium contention the timeout baseline posts a better ratio than we do while completing about 40% fewer transactions, because throttling a system is a way of avoiding deadlock that nobody would choose. Both columns have to be read together.'));
 
-h(FIG(SHOTS + '06-tests-etcd.png', 5.10));
+h(FIG(SHOTS + 'fig5-etcd-tests.png', 5.10));
 h(FIGCAP(5, 'The five tests that run against a live etcd, out of thirty-six in the suite. These are the evidence behind the safety claim in Section VI-E, since exclusion here is enforced by Raft rather than by a structure we wrote. The fencing-token test prints the two etcd revisions it observed and checks that the second is larger.'));
 
-h(FIG(SHOTS + '07b-h10.png', 5.80));
+h(FIG(SHOTS + 'fig6-h10.png', 5.80));
 h(FIGCAP(6, 'Deadlock frequency against the three baselines, run live at five trials. At high contention cost-only and youngest complete one transaction each, so the ratio in the final column divides by almost nothing. The finding is the collapse in the completed column, not the size of the ratio. The tables in Section VI cite the twenty-trial run.'));
 
 // ------------------------------------------------------------- body part B
@@ -416,6 +417,6 @@ const doc = new Document({
 });
 
 Packer.toBuffer(doc).then(x => {
-  fs.writeFileSync('/home/claude/report/IEEE_Paper.docx', x);
+  fs.writeFileSync(path.join(__dirname, 'IEEE_Paper.docx'), x);
   console.log('written', x.length);
 });
