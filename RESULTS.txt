@@ -1,0 +1,207 @@
+Adaptive Distributed Lock Management Framework
+Section 8 experiments, 20 trials per configuration
+Each run is seeded, so these numbers reproduce exactly.
+
+H1  Services disrupted per deadlock (lower is better), 20 trials
+    cost-only : 1.586 +/- 0.004
+    adaptive  : 1.641 +/- 0.004
+    work lost per deadlock: cost-only 1.00, adaptive 1.00
+    VERDICT: adaptive WORSE than cost-only by 3.5%, separated at 95% - reported as-is
+    NOTE: the adaptive policy carries an anti-starvation term that deliberately
+    trades disruption for throughput. Judged on this metric alone it can look
+    worse. H7 ablates the terms and reports completed transactions, which the
+    policy does not optimise and is therefore the honest comparison.
+
+H2  Recovery time in ticks by contention level, 20 trials each
+    low    contention (pool=12)
+        timeout : mean 55.45 +/- 1.26   P95 180.15
+        adaptive: mean 9.08 +/- 0.20   P95 33.65
+        adaptive better than timeout by 83.6%, separated at 95%
+    medium contention (pool=6)
+        timeout : mean 30.62 +/- 0.89   P95 45.30
+        adaptive: mean 10.81 +/- 0.67   P95 26.35
+        adaptive better than timeout by 64.7%, separated at 95%
+    high   contention (pool=3)
+        timeout : mean 14.44 +/- 0.04   P95 20.00
+        adaptive: mean 3.00 +/- 0.00   P95 3.00
+        adaptive better than timeout by 79.2%, separated at 95%
+
+H3  Framework overhead, 20 trials (bound set in advance: <10% throughput)
+    transactions completed: on 3689.1, off 3689.1
+    throughput impact     : +0.00% (negative means the framework completed MORE)
+    wall clock per run    : on 46750us, off 31364us (CPU cost +49.1%)
+    lock-order graph edges: 4.0 (grows with distinct lock pairs, not contention)
+    VERDICT: within the stated bound
+
+H4  Crash and stale-lock recovery, 20 trials
+    double-grants observed      : 0
+    runs that kept making progress after the crash: 20/20
+    NOTE: the load-bearing evidence for this hypothesis is the etcd
+          integration test (TestEtcdMutualExclusion, TestEtcdLeaseExpiryReclaimsAfterCrash),
+          where exclusion is enforced by Raft rather than by our own data structure.
+
+H5  Pillar 1 lock-order prediction, 20 trials per setting
+
+  (a) Lead time against contention. Reversed-order services are introduced
+      at tick 400 into an already-running system.
+      heavy       deadlocks/run    916 | lead   -474.1 +/- 242.2 ticks | arrives TOO LATE - the deadlock happens first
+      moderate    deadlocks/run    508 | lead    +14.5 +/- 8.1 ticks | warns BEFORE the deadlock
+      light       deadlocks/run     32 | lead   +669.0 +/- 161.3 ticks | warns BEFORE the deadlock
+      very light  deadlocks/run      6 | lead  +2144.5 +/- 406.7 ticks | warns BEFORE the deadlock
+      Why: the check needs a service to SUCCESSFULLY complete an out-of-order
+      acquisition before it has any evidence. Under heavy contention that
+      service deadlocks on its first attempt, so the deadlock beats the warning.
+
+  (b) Robustness to delayed and lost observations, at moderate contention.
+      clean             precision 1.000 | attribution 1.000 | recall 1.000 +/- 0.000 | lead +21.4
+      delay=3           precision 1.000 | attribution 1.000 | recall 0.988 +/- 0.024 | lead +2.4
+      delay=3 loss=5%   precision 1.000 | attribution 1.000 | recall 0.887 +/- 0.075 | lead +12.8
+      delay=8 loss=15%  precision 1.000 | attribution 1.000 | recall 0.725 +/- 0.112 | lead +4.5
+      precision   = the flagged lock pair really is a dangerous pair
+      attribution = the two services the flag NAMED really do disagree on order.
+                    Tracked separately because a flag can name the right pair
+                    for the wrong reason; an earlier version of the gap-skipping
+                    logic did exactly that and precision alone did not catch it.
+
+H6  Explanation recording overhead, 20 trials
+    recording on : 113255us +/- 3779
+    recording off: 112112us +/- 4219
+    delta        : +1.02%
+    VERDICT: no difference separable from trial noise
+
+    Sample generated explanation (off the critical path):
+      At tick 5 the system broke a deadlock by choosing to abort svc4.
+        Why: aborted svc4: blast_radius=1.0 rollback_cost=1.0 partition=0 -> score 2.00 (lowest of 2)
+        It actually disrupted 1 service(s).
+      Contrastive: svc4 was chosen over svc8 because it scored 2.00 against 3.00, and the engine takes the lowest score. A lower score means less expected total disruption.
+      799 recovery decisions, disrupting 1318.0 services in total (1.65 per decision).
+Most often chosen as victim: svc0 (149), svc4 (149), svc8 (141).
+
+H7  Ablation of Pillar 2, 20 trials per cell
+    'disrupted' is the policy's own objective; 'completed' is independent.
+
+    12 services:
+      cost-only (prior art)      completed    199 +/- 6      disrupted  1.970 +/- 0.020
+      blast only, fixed w        completed    230 +/- 29     disrupted  1.820 +/- 0.015
+      blast + self-calibration   completed    230 +/- 29     disrupted  1.820 +/- 0.015
+      blast + fairness           completed    450 +/- 4      disrupted  2.256 +/- 0.010
+      full (all three)           completed    434 +/- 5      disrupted  2.384 +/- 0.010
+
+    30 services:
+      cost-only (prior art)      completed    113 +/- 3      disrupted  6.877 +/- 0.187
+      blast only, fixed w        completed      2 +/- 1      disrupted  4.712 +/- 0.005
+      blast + self-calibration   completed      2 +/- 1      disrupted  4.712 +/- 0.005
+      blast + fairness           completed    348 +/- 2      disrupted  6.695 +/- 0.107
+      full (all three)           completed    332 +/- 2      disrupted  6.761 +/- 0.123
+
+    60 services:
+      cost-only (prior art)      completed    111 +/- 3      disrupted 11.976 +/- 0.192
+      blast only, fixed w        completed      1 +/- 0      disrupted  9.760 +/- 0.098
+      blast + self-calibration   completed      1 +/- 0      disrupted  9.760 +/- 0.098
+      blast + fairness           completed    346 +/- 3      disrupted 11.769 +/- 0.120
+      full (all three)           completed    335 +/- 3      disrupted 11.858 +/- 0.152
+
+    Reading:
+    - blast radius alone starves the cheapest victims. At 30 and 60 services
+      it collapses throughput to almost nothing while posting the BEST
+      disruption figure, which is the clearest illustration in this suite of
+      why a policy must not be judged on the metric it optimises.
+    - the fairness term is what makes the approach beat the prior art on an
+      independent metric: roughly three times cost-only's completed count at
+      30 and 60 services, at comparable disruption.
+    - self-calibration does not earn its place. In the arms without fairness
+      it is inert (identical to fixed weights) because those arms complete so
+      little that almost no feedback arrives. In the arms with fairness it is
+      actively worse on throughput. H9 pins down why, so the framework ships
+      with it switched off (recovery.DefaultAlpha = 0).
+
+H8  Network partition, 20 trials
+    One service is cut off at tick 1000 for 1500 ticks: still running and
+    still holding its locks, but unreachable and silent. All rows are the
+    adaptive policy with one mechanism toggled, except the last.
+
+                                                   episodes   futile attempts    completed txns
+      no partition handling                        22.90         46.2 +/- 33.8       876 +/- 46
+      weighted term only (as the report states it)  0.00          0.0 +/- 0.0        930 +/- 16
+      tier preference only, weight zero             0.00          0.0 +/- 0.0        930 +/- 16
+      both (shipped configuration)                  0.00          0.0 +/- 0.0        930 +/- 16
+      cost-only (context only: differs in more)    30.15        164.4 +/- 56.0      1062 +/- 88
+
+    Reading this honestly:
+    - "futile attempts" is inflated by re-detection. The monitor re-examines
+      the graph every 5 ticks, so one deadlock that never clears contributes
+      hundreds of attempts. "Episodes" is the number of distinct times the
+      engine started aiming at a service that could not receive the order.
+    - the weighted term and the tier both reduce futility to zero here, so
+      this run does not distinguish them. A separate measurement
+      (TestPartitionMargin) shows why: when both a reachable and an
+      unreachable candidate are present, the cost gap between them is near
+      zero, so a weight of 2.0 dominates easily. That is a property of this
+      workload, not of the formula: the weighted term is a fixed number
+      competing with unbounded costs, so a workload with larger cost spreads
+      would overrule it. The tier does not depend on any margin.
+    - within the controlled rows, partition handling also raises throughput
+      (first row versus the next three, confidence intervals not overlapping),
+      because the deadlock clears instead of standing until the lease lapses.
+    - the cost-only row completes MORE than any of them. That is not evidence
+      against partition handling: cost-only also lacks the fairness term, and
+      a futile abort destroys no work, so it both stalls more and wastes less.
+      It is listed to show why the cross-policy comparison was dropped.
+
+H9  Self-calibration under heterogeneous service criticality, 20 trials
+    H7 found self-calibration inert on a uniform topology. If it never helps
+    here either, the claim should be dropped rather than defended.
+    The learner's target is work lost, so that is the column it is entitled
+    to be judged on. "Disrupted" is the cost it was NOT trained on.
+
+    criticality skew 0x:
+      alpha=0.00 (no calibration) completed    528 +/- 7     disrupted   3.338 +/- 0.090  work lost  1.234 +/- 0.004
+      alpha=0.08                 completed    503 +/- 10    disrupted   3.985 +/- 0.068  work lost  1.253 +/- 0.005
+      alpha=0.30                 completed    503 +/- 10    disrupted   4.053 +/- 0.080  work lost  1.248 +/- 0.005
+
+    criticality skew 3x:
+      alpha=0.00 (no calibration) completed    550 +/- 7     disrupted   6.056 +/- 0.152  work lost  1.226 +/- 0.006
+      alpha=0.08                 completed    512 +/- 9     disrupted   7.836 +/- 0.140  work lost  1.253 +/- 0.005
+      alpha=0.30                 completed    503 +/- 9     disrupted   8.034 +/- 0.139  work lost  1.252 +/- 0.006
+
+    criticality skew 10x:
+      alpha=0.00 (no calibration) completed    563 +/- 10    disrupted  11.356 +/- 0.260  work lost  1.217 +/- 0.006
+      alpha=0.08                 completed    514 +/- 10    disrupted  17.422 +/- 0.348  work lost  1.249 +/- 0.005
+      alpha=0.30                 completed    512 +/- 7     disrupted  17.127 +/- 0.281  work lost  1.246 +/- 0.005
+
+H10 Deadlock frequency against the baselines, 20 trials
+    Objective 3 names three comparison metrics. This is the third.
+
+    low contention (lock pool 12):
+      timeout (baseline 1)     deadlocks    288   completed  1500   per 1k completed   192.3 +/- 4.6  
+      cost-only (baseline 2)   deadlocks    644   completed  3454   per 1k completed   186.6 +/- 3.3  
+      youngest (baseline 3)    deadlocks    648   completed  3406   per 1k completed   190.5 +/- 3.2  
+      adaptive (ours)          deadlocks    629   completed  3536   per 1k completed   178.0 +/- 2.8  
+
+    medium contention (lock pool 6):
+      timeout (baseline 1)     deadlocks    318   completed   263   per 1k completed  1212.0 +/- 19.1 
+      cost-only (baseline 2)   deadlocks    709   completed   192   per 1k completed  3713.9 +/- 139.8
+      youngest (baseline 3)    deadlocks    710   completed   170   per 1k completed  4200.5 +/- 158.5
+      adaptive (ours)          deadlocks    714   completed   450   per 1k completed  1585.0 +/- 20.5 
+
+    high contention (lock pool 3):
+      timeout (baseline 1)     deadlocks    224   completed   108   per 1k completed  2067.9 +/- 15.5 
+      cost-only (baseline 2)   deadlocks    799   completed     1   per 1k completed 655410.3 +/- 123648.5
+      youngest (baseline 3)    deadlocks    799   completed     1   per 1k completed 687888.9 +/- 115237.2
+      adaptive (ours)          deadlocks    468   completed   332   per 1k completed  1406.6 +/- 17.3 
+
+    Read the last column, not the first. A policy that leaves deadlocks
+    standing records fewer of them, because the services involved never get
+    back to work and so never collide again -- the timeout rows show exactly
+    this. Deadlocks per thousand completed transactions is how much deadlock
+    the system suffers per unit of work it actually finishes.
+    Even that column does not fully rescue timeout: at medium contention it
+    posts a better ratio than ours while completing about 40% fewer
+    transactions, because throttling the system is a way of avoiding
+    deadlock that no one would choose. Read the two columns together.
+    The youngest-transaction baseline lands almost exactly on cost-only and
+    collapses with it at high contention (1 completed transaction, hence the
+    absurd ratio). Both starve the same victims. That the textbook rule a
+    practitioner would reach for first fails the same way is a better
+    argument for the fairness term than any comparison against cost-only.
+

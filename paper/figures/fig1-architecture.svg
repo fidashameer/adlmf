@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="1060" viewBox="0 0 700 1060" font-family="Times New Roman, Times, serif">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#111"/>
+    </marker>
+    <marker id="ao" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#666"/>
+    </marker>
+  </defs>
+  <rect width="700" height="1060" fill="#ffffff"/>
+
+  <!-- 1. services -->
+  <rect x="150" y="18" width="400" height="76" fill="#fff" stroke="#111" stroke-width="2"/>
+  <text x="350" y="46" text-anchor="middle" font-size="21" font-weight="bold">Microservices</text>
+  <text x="350" y="70" text-anchor="middle" font-size="17" fill="#333">N independent OS processes</text>
+  <text x="350" y="88" text-anchor="middle" font-size="15" fill="#555">each acquires locks in a fixed order</text>
+
+  <!-- arrows down to etcd -->
+  <line x1="268" y1="94" x2="268" y2="148" stroke="#111" stroke-width="2" marker-end="url(#a)"/>
+  <text x="258" y="126" text-anchor="end" font-size="15">acquire / renew / release</text>
+  <line x1="432" y1="148" x2="432" y2="100" stroke="#666" stroke-width="2" marker-end="url(#ao)"/>
+  <text x="442" y="126" font-size="15" fill="#555">grant + fencing token</text>
+
+  <!-- 2. etcd -->
+  <rect x="150" y="150" width="400" height="80" fill="#F2F2EE" stroke="#111" stroke-width="2"/>
+  <text x="350" y="178" text-anchor="middle" font-size="21" font-weight="bold">Lock Service: etcd</text>
+  <text x="350" y="200" text-anchor="middle" font-size="15" fill="#333">lease + compare-and-swap txn, serialised by Raft</text>
+  <text x="350" y="219" text-anchor="middle" font-size="15" fill="#333">revision number used as the fencing token</text>
+
+  <!-- event stream -->
+  <line x1="350" y1="230" x2="350" y2="282" stroke="#111" stroke-width="2" marker-end="url(#a)"/>
+  <text x="362" y="252" font-size="15">event stream: acquired / waiting / released,</text>
+  <text x="362" y="272" font-size="15">each with a per-service sequence number</text>
+
+  <!-- 3. monitor container -->
+  <rect x="40" y="284" width="620" height="206" fill="#fff" stroke="#111" stroke-width="2"/>
+  <text x="350" y="311" text-anchor="middle" font-size="21" font-weight="bold">Dependency Monitor</text>
+  <text x="350" y="331" text-anchor="middle" font-size="15" fill="#444">reorder buffer &#183; gap skipping &#183; two-interval confirmation</text>
+
+  <rect x="62" y="345" width="280" height="128" fill="#FAFAF7" stroke="#444" stroke-width="1.5"/>
+  <text x="202" y="370" text-anchor="middle" font-size="18" font-weight="bold">Wait-for graph</text>
+  <text x="202" y="392" text-anchor="middle" font-size="15" fill="#333">who is blocked, right now</text>
+  <text x="202" y="412" text-anchor="middle" font-size="15" fill="#333">cleared as locks release</text>
+  <text x="202" y="438" text-anchor="middle" font-size="15" fill="#111">Tarjan SCC &#8594; cycle = deadlock</text>
+  <text x="202" y="461" text-anchor="middle" font-size="14" fill="#666">(detection: established work)</text>
+
+  <rect x="358" y="345" width="280" height="128" fill="#FAFAF7" stroke="#444" stroke-width="1.5"/>
+  <text x="498" y="370" text-anchor="middle" font-size="18" font-weight="bold">Lock-order graph</text>
+  <text x="498" y="392" text-anchor="middle" font-size="15" fill="#333">acquisition history</text>
+  <text x="498" y="412" text-anchor="middle" font-size="15" fill="#333">never cleared</text>
+  <text x="498" y="438" text-anchor="middle" font-size="15" fill="#111">opposite orderings &#8594; warning</text>
+  <text x="498" y="461" text-anchor="middle" font-size="14" fill="#666">(Pillar 1: prediction)</text>
+
+  <!-- branch arrows -->
+  <line x1="202" y1="490" x2="202" y2="556" stroke="#111" stroke-width="2" marker-end="url(#a)"/>
+  <text x="192" y="526" text-anchor="end" font-size="15">cycle</text>
+
+  <line x1="498" y1="490" x2="498" y2="556" stroke="#111" stroke-width="2" marker-end="url(#a)"/>
+  <text x="508" y="520" font-size="15">early warning</text>
+  <text x="508" y="540" font-size="14" fill="#555">before anyone blocks</text>
+
+  <!-- 4. engine -->
+  <rect x="40" y="558" width="340" height="150" fill="#F2F2EE" stroke="#111" stroke-width="2"/>
+  <text x="210" y="585" text-anchor="middle" font-size="20" font-weight="bold">Recovery Decision Engine</text>
+  <text x="210" y="604" text-anchor="middle" font-size="14" fill="#666">(Pillar 2: victim selection)</text>
+  <text x="58" y="630" font-size="15" font-weight="bold">predicted damage</text>
+  <text x="58" y="650" font-size="15">blast radius &#215; criticality + rollback cost</text>
+  <text x="58" y="674" font-size="15" font-weight="bold">preferences</text>
+  <text x="58" y="694" font-size="15">reachable-first tier + anti-starvation</text>
+
+  <!-- warning consumer box -->
+  <rect x="400" y="558" width="260" height="92" fill="#fff" stroke="#444" stroke-width="1.5"/>
+  <text x="530" y="584" text-anchor="middle" font-size="17" font-weight="bold">Operator warning</text>
+  <text x="530" y="606" text-anchor="middle" font-size="14" fill="#333">names both locks and</text>
+  <text x="530" y="624" text-anchor="middle" font-size="14" fill="#333">both disagreeing services</text>
+  <text x="530" y="643" text-anchor="middle" font-size="14" fill="#666">no abort required</text>
+
+  <!-- fault manager side input -->
+  <rect x="400" y="664" width="260" height="60" fill="#fff" stroke="#444" stroke-width="1.5"/>
+  <text x="530" y="688" text-anchor="middle" font-size="17" font-weight="bold">Fault Manager</text>
+  <text x="530" y="710" text-anchor="middle" font-size="14" fill="#333">lease expiry &#183; partition suspicion</text>
+  <line x1="400" y1="694" x2="382" y2="694" stroke="#666" stroke-width="2" marker-end="url(#ao)"/>
+
+  <!-- engine down -->
+  <line x1="210" y1="708" x2="210" y2="762" stroke="#111" stroke-width="2" marker-end="url(#a)"/>
+  <text x="200" y="740" text-anchor="end" font-size="15">lowest score</text>
+
+  <!-- 5. victim -->
+  <rect x="40" y="764" width="340" height="66" fill="#fff" stroke="#111" stroke-width="2"/>
+  <text x="210" y="789" text-anchor="middle" font-size="19" font-weight="bold">Victim aborted</text>
+  <text x="210" y="812" text-anchor="middle" font-size="15" fill="#333">signal across the process boundary</text>
+
+  <!-- feedback loop to services -->
+  <path d="M40,797 L18,797 L18,56 L150,56" fill="none" stroke="#111" stroke-width="2" marker-end="url(#a)"/>
+  <text x="26" y="430" font-size="15" transform="rotate(-90 26,430)" text-anchor="middle">transaction restarts; locks released</text>
+
+  <!-- 6. recorder -->
+  <line x1="380" y1="797" x2="438" y2="797" stroke="#666" stroke-width="2" marker-end="url(#ao)"/>
+  <rect x="440" y="764" width="220" height="66" fill="#fff" stroke="#444" stroke-width="1.5"/>
+  <text x="550" y="789" text-anchor="middle" font-size="17" font-weight="bold">Decision Recorder</text>
+  <text x="550" y="811" text-anchor="middle" font-size="14" fill="#333">on critical path, append only</text>
+
+  <line x1="550" y1="830" x2="550" y2="876" stroke="#666" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+  <text x="560" y="858" font-size="14" fill="#555">offline</text>
+  <rect x="440" y="878" width="220" height="66" fill="#fff" stroke="#444" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="550" y="903" text-anchor="middle" font-size="17" font-weight="bold">Explanation Generator</text>
+  <text x="550" y="925" text-anchor="middle" font-size="14" fill="#333">contrastive &#183; what-if</text>
+
+  <!-- legend -->
+  <line x1="40" y1="962" x2="78" y2="962" stroke="#111" stroke-width="2"/>
+  <text x="86" y="967" font-size="15">critical path</text>
+  <line x1="200" y1="962" x2="238" y2="962" stroke="#666" stroke-width="2" stroke-dasharray="5,4"/>
+  <text x="246" y="967" font-size="15">off the critical path</text>
+  <rect x="408" y="954" width="26" height="15" fill="#F2F2EE" stroke="#111" stroke-width="1.5"/>
+  <text x="442" y="967" font-size="15">contributed in this work</text>
+</svg>

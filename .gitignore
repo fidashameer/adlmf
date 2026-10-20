@@ -1,0 +1,10 @@
+# build output
+/bin/
+*.test
+*.out
+
+# etcd's local data directory, created wherever etcd is started
+default.etcd/
+
+# macOS
+.DS_Store
