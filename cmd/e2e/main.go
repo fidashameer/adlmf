@@ -18,12 +18,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -44,6 +47,14 @@ func main() {
 	runFor := flag.Duration("for", 12*time.Second, "how long to run")
 	stubBin := flag.String("stub", "", "path to a prebuilt stubservice binary; if empty, it is compiled with `go build`")
 	numSvcs := flag.Int("services", 3, "how many services to run, each as its own OS process")
+	policyName := flag.String("policy", "adaptive",
+		"victim selection: adaptive, blast-only, cost-only, timeout, youngest")
+	timeoutMS := flag.Float64("timeout-ms", 300,
+		"how long the timeout baseline waits before aborting the longest waiter")
+	quiet := flag.Bool("quiet", false, "suppress the per-event log, for batch runs")
+	lockPool := flag.Int("locks", 3, "how many distinct locks services compete over")
+	varyLocks := flag.Bool("vary-locks", false,
+		"give services different numbers of locks, so rollback cost varies between them")
 	httpAddr := flag.String("http", "", "serve a live dashboard on this address, e.g. :8080 (off by default)")
 	flag.Parse()
 
@@ -80,9 +91,11 @@ func main() {
 		fmt.Printf("refusing to start %d processes; 50 is the sane limit\n", *numSvcs)
 		os.Exit(1)
 	}
-	plans := buildPlans(*numSvcs)
-	fmt.Printf("e2e: %d stub services started as separate OS processes against %s\n",
-		len(plans), *endpoint)
+	plans := buildPlans(*numSvcs, *lockPool, *varyLocks)
+	if !*quiet {
+		fmt.Printf("e2e: %d stub services started as separate OS processes against %s\n",
+			len(plans), *endpoint)
+	}
 
 	var (
 		mu    sync.Mutex
@@ -104,8 +117,14 @@ func main() {
 		// fixed at 1), which left the fairness term permanently zero -- so the
 		// harness kept choosing the same victim and never exercised the one
 		// mechanism H7 identifies as load-bearing.
-		obsHeld  = map[types.ServiceID]int{}
-		abortsBy = map[types.ServiceID]float64{}
+		obsHeld = map[types.ServiceID]int{}
+
+		// When each service most recently became blocked. The timeout and
+		// youngest baselines both score on wait time, so without this they
+		// would see an all-zero map and degenerate.
+		blockedAt = map[types.ServiceID]time.Time{}
+		completed int
+		abortsBy  = map[types.ServiceID]float64{}
 	)
 
 	for _, p := range plans {
@@ -127,14 +146,29 @@ func main() {
 		go func() {
 			sc := bufio.NewScanner(stdout)
 			for sc.Scan() {
+				line := sc.Bytes()
+				if bytes.HasPrefix(line, []byte("#DONE")) {
+					mu.Lock()
+					completed++
+					mu.Unlock()
+					continue
+				}
 				var ev types.LockEvent
-				if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+				if err := json.Unmarshal(line, &ev); err != nil {
 					continue
 				}
 				mu.Lock()
 				wf.Apply(ev)
 				lo.Observe(ev)
 				evCount++
+				switch ev.Kind {
+				case types.Waiting:
+					if _, already := blockedAt[ev.Service]; !already {
+						blockedAt[ev.Service] = time.Now()
+					}
+				case types.Acquired, types.Released:
+					delete(blockedAt, ev.Service)
+				}
 				mu.Unlock()
 			}
 		}()
@@ -145,7 +179,9 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("     prefix %s\n", prefix)
+	if !*quiet {
+		fmt.Printf("     prefix %s\n", prefix)
+	}
 
 	var dash *dashboard
 	if *httpAddr != "" {
@@ -155,7 +191,29 @@ func main() {
 	}
 	fmt.Println()
 
-	policy := recovery.NewAdaptivePolicy(recovery.DefaultAlpha)
+	// All four comparison policies satisfy the same interface, so the harness
+	// can run any of them against real processes rather than only the adaptive
+	// one. The baselines are the same implementations the simulator uses.
+	var policy recovery.Policy
+	switch *policyName {
+	case "adaptive":
+		policy = recovery.NewAdaptivePolicy(recovery.DefaultAlpha)
+	case "blast-only":
+		// Blast radius with the anti-starvation term switched off, which is
+		// the arm H7 identifies as destructive.
+		ap := recovery.NewAdaptivePolicy(0)
+		ap.W.Fairness = 0
+		policy = ap
+	case "cost-only":
+		policy = recovery.CostOnlyPolicy{}
+	case "timeout":
+		policy = recovery.TimeoutPolicy{Threshold: *timeoutMS}
+	case "youngest":
+		policy = recovery.YoungestPolicy{}
+	default:
+		fmt.Printf("unknown policy %q\n", *policyName)
+		os.Exit(1)
+	}
 
 	var (
 		exclusionViolations int
@@ -166,7 +224,10 @@ func main() {
 		reclaimAfterKill    time.Duration
 	)
 
-	allLocks := []types.LockID{"L0", "L1", "L2"}
+	allLocks := make([]types.LockID, *lockPool)
+	for i := range allLocks {
+		allLocks[i] = types.LockID(fmt.Sprintf("L%d", i))
+	}
 
 	killAt := time.Now().Add(*runFor / 2)
 	killed := false
@@ -193,8 +254,10 @@ func main() {
 		mu.Lock()
 		for _, f := range lo.Tick() {
 			flagsConfirmed++
-			fmt.Printf("  [t=%4dms] PILLAR 1 flag: %s\n",
-				time.Since(deadline.Add(-*runFor)).Milliseconds(), f)
+			if !*quiet {
+				fmt.Printf("  [t=%4dms] PILLAR 1 flag: %s\n",
+					time.Since(deadline.Add(-*runFor)).Milliseconds(), f)
+			}
 			if dash != nil {
 				dash.log("flag", f.String())
 			}
@@ -212,6 +275,9 @@ func main() {
 			for _, id := range cycles[0] {
 				snap.RollbackCost[id] = float64(obsHeld[id])
 				snap.AbortCount[id] = abortsBy[id]
+				if t, ok := blockedAt[id]; ok {
+					snap.WaitTime[id] = float64(time.Since(t).Milliseconds())
+				}
 			}
 			if d, err := policy.Decide(snap); err == nil {
 				decision = &d
@@ -227,9 +293,11 @@ func main() {
 				abortsBy[decision.Chosen.Service]++
 				mu.Unlock()
 				deadlocksBroken++
-				fmt.Printf("  [t=%4dms] DEADLOCK %v -> abort %s (signal to pid %d)\n",
-					time.Since(deadline.Add(-*runFor)).Milliseconds(),
-					cycles[0], decision.Chosen.Service, s.cmd.Process.Pid)
+				if !*quiet {
+					fmt.Printf("  [t=%4dms] DEADLOCK %v -> abort %s (signal to pid %d)\n",
+						time.Since(deadline.Add(-*runFor)).Milliseconds(),
+						cycles[0], decision.Chosen.Service, s.cmd.Process.Pid)
+				}
 				if dash != nil {
 					dash.log("deadlock", fmt.Sprintf("deadlock %v - aborting %s (signal to pid %d)",
 						cycles[0], decision.Chosen.Service, s.cmd.Process.Pid))
@@ -290,8 +358,10 @@ func main() {
 						_ = s.cmd.Process.Signal(syscall.SIGKILL)
 						delete(stubs, holder)
 						killed = true
-						fmt.Printf("  [t=%4dms] KILL -9 pid %d (%s) while it held %s\n",
-							time.Since(deadline.Add(-*runFor)).Milliseconds(), killedPID, holder, l)
+						if !*quiet {
+							fmt.Printf("  [t=%4dms] KILL -9 pid %d (%s) while it held %s\n",
+								time.Since(deadline.Add(-*runFor)).Milliseconds(), killedPID, holder, l)
+						}
 						if dash != nil {
 							dash.log("kill", fmt.Sprintf("kill -9 pid %d (%s) while it held %s", killedPID, holder, l))
 						}
@@ -327,13 +397,46 @@ func main() {
 	mu.Lock()
 	events := evCount
 	loSize := lo.Size()
+	done := completed
 	mu.Unlock()
+
+	// How unevenly aborts landed. If one service is being starved, the gap
+	// between the most and least aborted service is wide. If the policy is
+	// spreading the cost, it is narrow. Without this the absence of a
+	// starvation effect cannot be distinguished from starvation that does not
+	// happen to cost anything.
+	mu.Lock()
+	maxAborts, minAborts := 0.0, math.Inf(1)
+	for id := range known {
+		n := abortsBy[id]
+		if n > maxAborts {
+			maxAborts = n
+		}
+		if n < minAborts {
+			minAborts = n
+		}
+	}
+	mu.Unlock()
+	if math.IsInf(minAborts, 1) {
+		minAborts = 0
+	}
+
+	// One machine-readable line so a batch runner can aggregate many runs
+	// without parsing the human-readable block below.
+	fmt.Printf("RESULT policy=%s services=%d for=%s completed=%d deadlocks=%d flags=%d events=%d violations=%d maxaborts=%.0f minaborts=%.0f\n",
+		*policyName, *numSvcs, runFor.String(), done, deadlocksBroken, flagsConfirmed, events, exclusionViolations,
+		maxAborts, minAborts)
+
+	if *quiet {
+		return
+	}
 
 	fmt.Printf("\n--- end-to-end results ---\n")
 	fmt.Printf("lock events observed from separate processes : %d\n", events)
 	fmt.Printf("lock-order edges learned                     : %d\n", loSize)
 	fmt.Printf("Pillar 1 flags confirmed                     : %d\n", flagsConfirmed)
 	fmt.Printf("deadlocks detected and broken by signal      : %d\n", deadlocksBroken)
+	fmt.Printf("transactions completed                       : %d\n", done)
 	fmt.Printf("mutual-exclusion violations                  : %d\n", exclusionViolations)
 	if killed {
 		fmt.Printf("kill -9 of pid %d (%s), lock reclaimed in    : %v\n",
@@ -380,7 +483,7 @@ func main() {
 // opposite of what more services should demonstrate. Keeping the pool at three
 // means every added service increases contention, and the rotating assignment
 // (L0->L1, L1->L2, L2->L0) guarantees cycles rather than hoping for them.
-func buildPlans(n int) []struct {
+func buildPlans(n, poolSize int, vary bool) []struct {
 	id    string
 	locks string
 } {
@@ -388,10 +491,18 @@ func buildPlans(n int) []struct {
 		id    string
 		locks string
 	}
+	pool := make([]string, poolSize)
+	for i := range pool {
+		pool[i] = fmt.Sprintf("L%d", i)
+	}
+
+	// The first two services always take the same pair in opposite orders.
+	// That is the pattern deadlock detection and Pillar 1 both exist for, so
+	// it is seeded deliberately rather than left to chance.
 	base := []plan{
-		{"payment", "L0,L1"},
-		{"inventory", "L1,L0"}, // reversed: this is what deadlocks
-		{"order", "L1,L2"},
+		{"payment", pool[0] + "," + pool[1%poolSize]},
+		{"inventory", pool[1%poolSize] + "," + pool[0]},
+		{"order", pool[1%poolSize] + "," + pool[2%poolSize]},
 	}
 	if n <= len(base) {
 		return base[:n]
@@ -399,7 +510,6 @@ func buildPlans(n int) []struct {
 
 	names := []string{"shipping", "billing", "catalog", "search", "notify",
 		"audit", "report", "pricing", "ledger", "fulfil"}
-	pool := []string{"L0", "L1", "L2"}
 
 	out := append([]plan(nil), base...)
 	for i := len(base); i < n; i++ {
@@ -407,9 +517,24 @@ func buildPlans(n int) []struct {
 		if j := i - len(base); j < len(names) {
 			name = names[j]
 		}
-		a := pool[i%len(pool)]
-		b := pool[(i+1)%len(pool)]
-		out = append(out, plan{name, a + "," + b})
+
+		// How many locks this service wants. With -vary-locks the count runs
+		// 2, 3, 4 and back, so services differ in how much work an abort
+		// discards. Without it every service wants two, which leaves rollback
+		// cost nearly identical across candidates.
+		want := 2
+		if vary {
+			want = 2 + i%3
+			if want > poolSize {
+				want = poolSize
+			}
+		}
+
+		ls := make([]string, 0, want)
+		for k := 0; k < want; k++ {
+			ls = append(ls, pool[(i+k)%poolSize])
+		}
+		out = append(out, plan{name, strings.Join(ls, ",")})
 	}
 	return out
 }

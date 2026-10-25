@@ -112,6 +112,14 @@ func main() {
 					}
 				}
 			}
+
+			// A completed transaction is one that took every lock it wanted
+			// and held them for the full duration without being aborted. The
+			// marker is deliberately not JSON, so the harness can tell it
+			// apart from a lock event without changing the event type.
+			if !abort.Load() {
+				fmt.Printf("#DONE %s\n", svc)
+			}
 		}
 
 		// Release in reverse order, whether we finished or were aborted.

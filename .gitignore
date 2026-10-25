@@ -8,3 +8,9 @@ default.etcd/
 
 # macOS
 .DS_Store
+
+# binaries built into the repo root by `go build ./cmd/...`
+/e2e
+/stubservice
+/realbench
+/experiments

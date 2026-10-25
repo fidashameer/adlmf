@@ -1,0 +1,41 @@
+Real-harness policy comparison
+
+Real operating-system processes against etcd 3.7.2. Unlike the simulator
+experiments these runs are not seeded, so every difference has to survive
+scheduling variance. Figures are mean +/- the half-width of a 95%
+confidence interval. A difference is only called real where the intervals
+do not overlap.
+
+== Throughput and deadlock frequency (98 trials, 12 s each) ==
+The starvation column is absent here; these trials predate it.
+
+6x3  (48 trials)
+    policy                completed          deadlocks per 1k completed excl
+    timeout          39.0 +/- 1.8        19.1 +/- 1.6      494.7 +/- 55.4    0
+    cost-only        48.3 +/- 0.8        28.4 +/- 2.9      589.5 +/- 64.8    0
+    youngest         48.1 +/- 2.2        32.8 +/- 4.6      693.8 +/- 122.4   0
+    blast-only       50.8 +/- 1.2        22.0 +/- 3.0      436.7 +/- 69.4    0
+    adaptive         49.0 +/- 1.4        28.9 +/- 2.4      591.7 +/- 62.2    0
+    best on completed: blast-only over adaptive, but the intervals OVERLAP, no win claimed
+
+20x3  (50 trials)
+    policy                completed          deadlocks per 1k completed excl
+    timeout          10.8 +/- 1.5        58.4 +/- 4.5     5803.7 +/- 1265.3  0
+    cost-only        21.9 +/- 1.1        87.4 +/- 5.8     4018.7 +/- 341.3   0
+    youngest         19.1 +/- 1.3        90.5 +/- 8.3     4809.1 +/- 613.6   0
+    blast-only       23.2 +/- 1.9        88.0 +/- 4.5     3862.6 +/- 419.4   0
+    adaptive         20.7 +/- 1.2        92.3 +/- 6.9     4489.3 +/- 401.4   0
+    best on completed: blast-only over cost-only, but the intervals OVERLAP, no win claimed
+
+== Starvation (45 trials, 12 s each, 20 services over 3 locks) ==
+worst-starved is the number of times the most-aborted service was
+sacrificed in a run. It measures starvation directly, separately from
+whether starvation costs any throughput.
+
+20x3  (45 trials)
+    policy                completed          deadlocks per 1k completed  worst-starved excl
+    blast-only       22.1 +/- 1.5        84.9 +/- 6.3     3945.3 +/- 533.6    21.0 +/- 1.8      0
+    adaptive         20.7 +/- 2.3        87.9 +/- 5.3     4478.9 +/- 669.2     8.9 +/- 0.7      0
+    cost-only        21.9 +/- 1.5        87.9 +/- 7.5     4136.0 +/- 586.3    11.0 +/- 1.3      0
+    best on completed: blast-only over cost-only, but the intervals OVERLAP, no win claimed
+
