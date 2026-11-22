@@ -109,6 +109,12 @@ Ten experiments, twenty seeded trials each, 95% confidence intervals. A differen
 is only reported as real where the intervals do not overlap. Full numbers in
 `RESULTS.txt`, the write-up in `paper/IEEE_Paper.pdf`.
 
+Everything in the table below comes from the seeded simulator. The same comparison
+was later run against real operating-system processes and a live etcd, and the two
+do not agree on all of it. That run is in `results/REAL-HARNESS.txt` and is read
+out under [Simulator against real processes](#simulator-against-real-processes)
+below. `paper/IEEE_Paper.pdf` is the version submitted at Review 2 and predates it.
+
 | | Hypothesis | Outcome |
 |---|---|---|
 | H1 | Disruption vs cost-only | 3.5% **worse**, separated at 95% |
@@ -117,7 +123,7 @@ is only reported as real where the intervals do not overlap. Full numbers in
 | H4 | Crash and stale-lock recovery | 0 double-grants, 20/20 progressed |
 | H5 | Prediction quality | Precision 1.000, recall 1.00 to 0.725 |
 | H6 | Explanation recording cost | +1.02%, inside trial noise |
-| H7 | Victim-selection ablation | Fairness term gives about 3x throughput |
+| H7 | Victim-selection ablation | Fairness term gives about 3x throughput, in the simulator |
 | H8 | Partition handling | 22.9 futile abort episodes down to 0 |
 | H9 | Self-calibration | **Loses on its own training target** |
 | H10 | Deadlock frequency | Best at every contention level |
@@ -145,6 +151,41 @@ radius, so a correct regression drives the blast-radius weight to zero. But blas
 radius is what governs throughput. The failure is in where a correct learner must
 converge, not in how it converges. It ships switched off
 (`recovery.DefaultAlpha = 0`).
+
+### Simulator against real processes
+
+Seeded runs answer whether a difference survives the seed. They do not answer
+whether it survives an operating system. The policy comparison was repeated
+against twenty stub services, each its own process, talking to a real etcd. Those
+runs are not seeded, so every difference has to hold up against scheduling
+variance. Numbers in `results/REAL-HARNESS.txt`.
+
+**The threefold throughput figure does not transfer.** Across 98 trials at two
+contention levels, no policy separates from any other on completed transactions.
+The intervals overlap in both configurations, so no win is claimed. At the heavier
+setting adaptive completes 20.7 transactions against the timeout baseline's 10.8,
+a factor of 1.9 rather than 3, and blast-only (23.2) and cost-only (21.9) both
+finish ahead of it.
+
+**The fairness term does transfer, and it is the part worth keeping.** Over 45
+trials with 20 services contending for 3 locks, counting what share of all aborts
+landed on the single worst-affected service:
+
+| policy | aborts falling on the worst-hit service | against a 5% fair share |
+|---|---|---|
+| blast-only | 24.7% | 4.9x |
+| cost-only | 12.7% | 2.5x |
+| adaptive | 10.2% | 2.0x |
+
+Adaptive against cost-only is 2.50 percentage points lower with a 95% interval of
+[0.68, 4.32], so the two separate. Against blast-only the gap is 14.5 points.
+Both figures come straight out of `results/starvation-trials.tsv`, whose columns
+are configuration, policy, completed, deadlocks, exclusions, and the number of
+aborts falling on the worst-affected service.
+
+So the mechanism this project argues for holds up outside the simulator and the
+throughput headline attached to it does not. Which of the remaining simulator
+results survive the same treatment is open, and is what the next phase is for.
 
 ### Two defects in our own measurement
 
@@ -180,7 +221,8 @@ benchmark/      the deterministic simulator and all ten experiments
 cmd/e2e/        end-to-end demo against real processes and real etcd
 cmd/experiments/  runs the experiments and prints RESULTS.txt
 cmd/stubservice/  one service, as its own OS process
-paper/          the write-up, its figures, and the script that builds it
+paper/          the write-up as submitted at Review 2, its figures, and its build script
+results/        the unseeded real-process runs: policy comparison and starvation trials
 docs/           scope audit against the Review 1 report
 ```
 
@@ -191,10 +233,14 @@ rejected. `DEMO-SCRIPT.md` is the walkthrough used for the live demonstration.
 
 ## Reproducibility
 
-Every experiment is seeded. The full suite was run on Linux under Go 1.24.7 and on
-macOS under Go 1.27.1 and the output compared. The only quantities that differ
-between machines are the two wall-clock measurements in H3 and H6, which are
-elapsed-time figures and vary run to run on the same machine as well.
+Every simulator experiment is seeded. The full suite was run on Linux under Go
+1.24.7 and on macOS under Go 1.27.1 and the output compared. The only quantities
+that differ between machines are the two wall-clock measurements in H3 and H6,
+which are elapsed-time figures and vary run to run on the same machine as well.
+
+The real-process runs under `results/` are a different matter. They are not
+seeded, they do not reproduce exactly, and they are reported as means with 95%
+intervals for that reason.
 
 ## Licence
 

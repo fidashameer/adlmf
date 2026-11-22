@@ -19,7 +19,8 @@ func main() {
 
 	fmt.Println("Adaptive Distributed Lock Management Framework")
 	fmt.Printf("Section 8 experiments, %d trials per configuration\n", *trials)
-	fmt.Println("Each run is seeded, so these numbers reproduce exactly.")
+	fmt.Println("Every figure here comes from the seeded simulator, so these numbers reproduce exactly.")
+	fmt.Println("The same comparison against real processes is in results/REAL-HARNESS.txt.")
 	fmt.Println()
 
 	run := map[string]func(int) string{
